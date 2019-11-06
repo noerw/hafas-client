@@ -6,6 +6,7 @@ const Promise = require('pinkie-promise')
 const {fetch} = require('fetch-ponyfill')({Promise})
 const {stringify} = require('qs')
 const {parse: parseContentType} = require('content-type')
+const findInTree = require('./lib/find-in-tree')
 const randomizeUserAgent = require('./lib/randomize-user-agent')
 const {byErrorCode} = require('./lib/rest-exe-errors')
 const parseWhen = require('./parse-rest/when')
@@ -85,10 +86,90 @@ const createRestClient = (profile, token, userAgent) => {
 			throw err
 		}
 
+		// todo: sometimes it returns a body without any data
+		// e.g. `location.nearbystops` with an invalid `type`
+
+		const mapping = {
+			'**.Stops.Stop': 'stops',
+			'**.Names.Name': 'products',
+		}
+
+		const allMatches = findInTree(Object.keys(mapping))(body)
+		for (const [needle, matches] of Object.entries(allMatches)) {
+			const newKey = mapping[needle]
+
+			for (const [item, parents] of matches) {
+				const grandParent = parents[1]
+				grandParent[newKey] = item
+			}
+		}
+
 		return {profile, opt, res: body}
 	}
 
+	const parseLocationsResult = (l, ctx) => {
+		if (l.StopLocation) {
+			return profile.parseLocation(ctx, {
+				type: 'ST', ...l.StopLocation
+			})
+		}
+		if (l.CoordLocation) {
+			return profile.parseLocation(ctx, {
+				type: 'ADR', ...l.CoordLocation
+			})
+		}
+		return null
+	}
+
+	const locations = async (query, opt = {}) => {
+		if (!isNonEmptyString(query)) {
+			throw new TypeError('query must be a non-empty string.')
+		}
+		opt = {
+			fuzzy: true, // find only exact matches?
+			results: 5, // how many search results?
+			stops: true, // return stops/stations?
+			addresses: true,
+			poi: true, // points of interest
+			linesOfStops: false, // parse & expose lines at each stop/station?
+			...opt
+		}
+
+		const ctx = await request('location.name', opt, {
+			input: opt.fuzzy ? query + '?' : query,
+			maxNo: 3, // todo: opt.results
+			type: profile.formatLocationFilter(opt.stops, opt.addresses, opt.poi)
+			// todo: `products` with bitmask
+			// todo: coordLong, coordLat, radius
+			// todo: refineId
+		})
+
+		return ctx.res.stopLocationOrCoordLocation
+		.map(l => parseLocationsResult(l, ctx))
+		.filter(loc => !!loc)
+	}
+
+	const nearby = async (location, opt = {}) => {
+		const ctx = await request('location.nearbystops', opt, {
+			originCoordLat: location.latitude,
+			originCoordLong: location.longitude,
+			// r: 2000, // radius
+			// maxNo: 5, // todo: opt.results
+			type: 'SP', // todo: S/P/SP
+			// todo: `products` with bitmask
+		})
+
+		return ctx.res.stopLocationOrCoordLocation
+		.map((l) => {
+			const loc = parseLocationsResult(l, ctx)
+			if (loc) loc.distance = l.dist
+			return loc
+		})
+		.filter(loc => !!loc)
+	}
+
 	const client = {
+		locations, nearby,
 	}
 	Object.defineProperty(client, 'profile', {value: profile})
 	return client
