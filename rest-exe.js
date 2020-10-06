@@ -18,6 +18,7 @@ const parseJourneyLeg = require('./parse-rest/journey-leg')
 const parseStopover = require('./parse-rest/stopover')
 const parseLocation = require('./parse-rest/location')
 const parseArrivalOrDeparture = require('./parse-rest/arrival-or-departure')
+const parseTrip = require('./parse-rest/trip')
 const formatDate = require('./format-rest/date')
 const formatTime = require('./format-rest/time')
 const defaultProfile = require('./lib/default-profile')
@@ -38,6 +39,7 @@ const createRestClient = (profile, token, userAgent) => {
 		parseStopover,
 		parseArrivalOrDeparture,
 		parseLocation,
+		parseTrip,
 		formatDate,
 		formatTime,
 		...profile
@@ -324,10 +326,31 @@ const createRestClient = (profile, token, userAgent) => {
 		return ctx.res.Trip.map(t => profile.parseJourney(ctx, t))
 	}
 
+	const tripAlternatives = async (tripCtx, origin, destination, opt = {}) => {
+		// todo
+		const ctx = await request('trip.alternatives', opt, {
+			ctx: 'T$A=1@O=Hildesheim Hbf@L=8000169@a=128@$A=1@O=Hannover Hbf@L=8000152@a=128@$201909031844$201909031910$erx83478$$1$',
+			originId: 'A=1@O=Sarstedt@X=9842595@Y=52232604@U=80@L=8005292@',
+			destId: 'A=1@O=Hannover Hbf@X=9741017@Y=52376764@U=80@L=8000152@',
+			// todo: operators, products, poly
+		})
+
+		return ctx.res.Trip.map(t => profile.parseJourney(ctx, t))
+	}
+
+	const trip = async (id, opt = {}) => {
+		const ctx = await request('journeyDetail', opt, {
+			id,
+			// todo: date, poly, showPassingPoints, rtMode
+		})
+
+		return profile.parseTrip(ctx, ctx.res)
+	}
+
 	const client = {
 		locations, nearby,
 		departures, arrivals,
-		journeys,
+		journeys, trip, tripAlternatives,
 	}
 	Object.defineProperty(client, 'profile', {value: profile})
 	return client
